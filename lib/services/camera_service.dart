@@ -10,7 +10,7 @@ class CameraService {
 
   bool get isInitialized => _controller?.value.isInitialized ?? false;
 
-  Future<void> initialize() async {
+  Future<void> initialize({ResolutionPreset preset = ResolutionPreset.high}) async {
     final cameras = await availableCameras();
     final front = cameras.firstWhere(
       (c) => c.lensDirection == CameraLensDirection.front,
@@ -19,7 +19,7 @@ class CameraService {
 
     _controller = CameraController(
       front,
-      ResolutionPreset.high,
+      preset,
       enableAudio: true,
     );
 

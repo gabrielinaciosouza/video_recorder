@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:io';
+import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:path_provider/path_provider.dart';
@@ -26,6 +27,7 @@ class _RecorderScreenState extends State<RecorderScreen> {
   StreamSubscription<AccelerometerEvent>? _accelSub;
 
   CameraEdge _cameraEdge = CameraEdge.top;
+  ResolutionPreset _quality = ResolutionPreset.high;
   bool _isInitialized = false;
   bool _isRecording = false;
   bool _permissionDenied = false;
@@ -46,7 +48,7 @@ class _RecorderScreenState extends State<RecorderScreen> {
     }
 
     try {
-      await _cameraService.initialize();
+      await _cameraService.initialize(preset: _quality);
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -115,6 +117,67 @@ class _RecorderScreenState extends State<RecorderScreen> {
     Navigator.pop(context, null);
   }
 
+  Future<void> _changeQuality(ResolutionPreset preset) async {
+    if (preset == _quality) return;
+    setState(() { _quality = preset; _isInitialized = false; });
+    _accelSub?.cancel();
+    _cameraService.dispose();
+    await _cameraService.initialize(preset: _quality);
+    if (!mounted) return;
+    setState(() => _isInitialized = true);
+    _accelSub = accelerometerEventStream().listen((event) {
+      final edge = OrientationHelper.fromAccelerometer(event);
+      if (edge != _cameraEdge) setState(() => _cameraEdge = edge);
+    });
+  }
+
+  void _showQualityPicker() {
+    final options = {
+      ResolutionPreset.low: '480p',
+      ResolutionPreset.high: '720p',
+      ResolutionPreset.veryHigh: '1080p',
+      ResolutionPreset.ultraHigh: '4K',
+    };
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.black87,
+      builder: (_) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Padding(
+              padding: EdgeInsets.all(16),
+              child: Text('Video Quality',
+                  style: TextStyle(color: Colors.white, fontSize: 16,
+                      fontWeight: FontWeight.bold)),
+            ),
+            ...options.entries.map((e) => ListTile(
+              title: Text(e.value, style: const TextStyle(color: Colors.white)),
+              trailing: _quality == e.key
+                  ? const Icon(Icons.check, color: Colors.green)
+                  : null,
+              onTap: () {
+                Navigator.pop(context);
+                _changeQuality(e.key);
+              },
+            )),
+            const SizedBox(height: 8),
+          ],
+        ),
+      ),
+    );
+  }
+
+  String get _qualityLabel {
+    switch (_quality) {
+      case ResolutionPreset.low: return '480p';
+      case ResolutionPreset.high: return '720p';
+      case ResolutionPreset.veryHigh: return '1080p';
+      case ResolutionPreset.ultraHigh: return '4K';
+      default: return '720p';
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -177,20 +240,36 @@ class _RecorderScreenState extends State<RecorderScreen> {
           text: widget.chunk.text,
         ),
 
-        // Layer 3: recording indicator (top-right dot when recording)
-        if (_isRecording)
-          Positioned(
-            top: 16,
-            right: 16,
-            child: Container(
-              width: 16,
-              height: 16,
-              decoration: const BoxDecoration(
-                color: Colors.red,
-                shape: BoxShape.circle,
-              ),
-            ),
-          ),
+        // Layer 3: quality button (top-right, hidden while recording)
+        //         + recording indicator dot (top-right, shown while recording)
+        Positioned(
+          top: 16,
+          right: 16,
+          child: _isRecording
+              ? Container(
+                  width: 16,
+                  height: 16,
+                  decoration: const BoxDecoration(
+                    color: Colors.red,
+                    shape: BoxShape.circle,
+                  ),
+                )
+              : GestureDetector(
+                  onTap: _showQualityPicker,
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                    decoration: BoxDecoration(
+                      color: Colors.black54,
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Text(
+                      _qualityLabel,
+                      style: const TextStyle(color: Colors.white,
+                          fontSize: 13, fontWeight: FontWeight.bold),
+                    ),
+                  ),
+                ),
+        ),
 
         // Layer 4: controls at the bottom
         Positioned(
