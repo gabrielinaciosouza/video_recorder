@@ -61,10 +61,12 @@ class _RecorderScreenState extends State<RecorderScreen> {
     if (!mounted) return;
     setState(() => _isInitialized = true);
 
+    _cameraService.controller.lockCaptureOrientation(_getDeviceOrientation(_cameraEdge));
     _accelSub = accelerometerEventStream().listen((event) {
       final edge = OrientationHelper.fromAccelerometer(event);
       if (edge != _cameraEdge) {
         setState(() => _cameraEdge = edge);
+        _cameraService.controller.lockCaptureOrientation(_getDeviceOrientation(edge));
       }
     });
   }
@@ -125,9 +127,14 @@ class _RecorderScreenState extends State<RecorderScreen> {
     await _cameraService.initialize(preset: _quality);
     if (!mounted) return;
     setState(() => _isInitialized = true);
+    
+    _cameraService.controller.lockCaptureOrientation(_getDeviceOrientation(_cameraEdge));
     _accelSub = accelerometerEventStream().listen((event) {
       final edge = OrientationHelper.fromAccelerometer(event);
-      if (edge != _cameraEdge) setState(() => _cameraEdge = edge);
+      if (edge != _cameraEdge) {
+        setState(() => _cameraEdge = edge);
+        _cameraService.controller.lockCaptureOrientation(_getDeviceOrientation(edge));
+      }
     });
   }
 
@@ -322,5 +329,18 @@ class _RecorderScreenState extends State<RecorderScreen> {
         ],
       ],
     );
+  }
+
+  DeviceOrientation _getDeviceOrientation(CameraEdge edge) {
+    switch (edge) {
+      case CameraEdge.top:
+        return DeviceOrientation.portraitUp;
+      case CameraEdge.bottom:
+        return DeviceOrientation.portraitDown;
+      case CameraEdge.left:
+        return DeviceOrientation.landscapeLeft;
+      case CameraEdge.right:
+        return DeviceOrientation.landscapeRight;
+    }
   }
 }
