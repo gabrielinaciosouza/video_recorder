@@ -77,9 +77,11 @@ class _PlaybackScreenState extends State<PlaybackScreen> {
       children: [
         // Video fills available vertical space, constrained so other widgets fit
         Expanded(
-          child: AspectRatio(
-            aspectRatio: _videoController.value.aspectRatio,
-            child: VideoPlayer(_videoController),
+          child: Center(
+            child: AspectRatio(
+              aspectRatio: _videoController.value.aspectRatio,
+              child: VideoPlayer(_videoController),
+            ),
           ),
         ),
         VideoProgressIndicator(
