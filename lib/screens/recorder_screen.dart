@@ -7,6 +7,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:saver_gallery/saver_gallery.dart';
 import 'package:sensors_plus/sensors_plus.dart';
 import '../models/script_chunk.dart';
+import '../services/audio_routing_service.dart';
 import '../services/camera_service.dart';
 import '../services/permission_service.dart';
 import '../utils/orientation_helper.dart';
@@ -14,9 +15,14 @@ import '../widgets/camera_preview_widget.dart';
 import '../widgets/teleprompter_overlay.dart';
 
 class RecorderScreen extends StatefulWidget {
-  final ScriptChunk chunk;
+  final List<ScriptChunk> chunks;
+  final int startIndex;
 
-  const RecorderScreen({super.key, required this.chunk});
+  const RecorderScreen({
+    super.key,
+    required this.chunks,
+    required this.startIndex,
+  });
 
   @override
   State<RecorderScreen> createState() => _RecorderScreenState();
@@ -24,6 +30,7 @@ class RecorderScreen extends StatefulWidget {
 
 class _RecorderScreenState extends State<RecorderScreen> {
   final CameraService _cameraService = CameraService();
+  final AudioRoutingService _audioService = AudioRoutingService();
   StreamSubscription<AccelerometerEvent>? _accelSub;
 
   CameraEdge _cameraEdge = CameraEdge.top;
@@ -33,11 +40,26 @@ class _RecorderScreenState extends State<RecorderScreen> {
   bool _permissionDenied = false;
   bool _isStopping = false;
 
+  int _currentIndex = 0;
+  bool _justRecorded = false;
+  final Map<String, String> _recordedPaths = {};
+  bool _hasUsbMic = false;
+
+  ScriptChunk get _currentChunk => widget.chunks[_currentIndex];
+  bool get _hasNext => _currentIndex < widget.chunks.length - 1;
+
   @override
   void initState() {
     super.initState();
+    _currentIndex = widget.startIndex;
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
     _initCamera();
+    _checkMicStatus();
+  }
+
+  Future<void> _checkMicStatus() async {
+    final hasUsb = await _audioService.hasUsbMic();
+    if (mounted) setState(() => _hasUsbMic = hasUsb);
   }
 
   Future<void> _initCamera() async {
@@ -90,7 +112,15 @@ class _RecorderScreenState extends State<RecorderScreen> {
 
     final tempPath = await _cameraService.stopRecording();
     final savedPath = await _saveVideo(tempPath);
-    if (mounted) Navigator.pop(context, savedPath);
+    _recordedPaths[_currentChunk.id] = savedPath;
+
+    if (mounted) {
+      setState(() {
+        _isRecording = false;
+        _isStopping = false;
+        _justRecorded = true;
+      });
+    }
   }
 
   /// Moves the video to the app documents dir (for reliable in-app playback)
@@ -115,8 +145,19 @@ class _RecorderScreenState extends State<RecorderScreen> {
     return dest;
   }
 
+  void _recordAgain() => setState(() => _justRecorded = false);
+
+  void _goToNext() => setState(() {
+    _currentIndex++;
+    _justRecorded = false;
+  });
+
+  void _finish() {
+    Navigator.pop(context, _recordedPaths.isEmpty ? null : _recordedPaths);
+  }
+
   void _cancel() {
-    Navigator.pop(context, null);
+    Navigator.pop(context, _recordedPaths.isEmpty ? null : _recordedPaths);
   }
 
   Future<void> _changeQuality(ResolutionPreset preset) async {
@@ -127,7 +168,7 @@ class _RecorderScreenState extends State<RecorderScreen> {
     await _cameraService.initialize(preset: _quality);
     if (!mounted) return;
     setState(() => _isInitialized = true);
-    
+
     _cameraService.controller.lockCaptureOrientation(_getDeviceOrientation(_cameraEdge));
     _accelSub = accelerometerEventStream().listen((event) {
       final edge = OrientationHelper.fromAccelerometer(event);
@@ -244,11 +285,32 @@ class _RecorderScreenState extends State<RecorderScreen> {
         // Layer 2: teleprompter text near the camera lens
         TeleprompterOverlay(
           cameraEdge: _cameraEdge,
-          text: widget.chunk.text,
+          text: _currentChunk.text,
         ),
 
-        // Layer 3: quality button (top-right, hidden while recording)
-        //         + recording indicator dot (top-right, shown while recording)
+        // Layer 3: top-left chunk progress indicator
+        if (widget.chunks.length > 1)
+          Positioned(
+            top: 16,
+            left: 16,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+              decoration: BoxDecoration(
+                color: Colors.black54,
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Text(
+                '${_currentIndex + 1} / ${widget.chunks.length}',
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 13,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ),
+          ),
+
+        // Layer 4: top-right controls (mic + quality button / recording dot)
         Positioned(
           top: 16,
           right: 16,
@@ -261,24 +323,75 @@ class _RecorderScreenState extends State<RecorderScreen> {
                     shape: BoxShape.circle,
                   ),
                 )
-              : GestureDetector(
-                  onTap: _showQualityPicker,
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                    decoration: BoxDecoration(
-                      color: Colors.black54,
-                      borderRadius: BorderRadius.circular(8),
+              : Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    if (_hasUsbMic)
+                      Padding(
+                        padding: const EdgeInsets.only(right: 8),
+                        child: Tooltip(
+                          message: 'Microfone USB conectado',
+                          child: Container(
+                            padding: const EdgeInsets.all(6),
+                            decoration: BoxDecoration(
+                              color: Colors.green.withValues(alpha: 0.85),
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                            child: const Icon(Icons.mic, color: Colors.white, size: 16),
+                          ),
+                        ),
+                      ),
+                    GestureDetector(
+                      onTap: _showQualityPicker,
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                        decoration: BoxDecoration(
+                          color: Colors.black54,
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: Text(
+                          _qualityLabel,
+                          style: const TextStyle(color: Colors.white,
+                              fontSize: 13, fontWeight: FontWeight.bold),
+                        ),
+                      ),
                     ),
-                    child: Text(
-                      _qualityLabel,
-                      style: const TextStyle(color: Colors.white,
-                          fontSize: 13, fontWeight: FontWeight.bold),
-                    ),
-                  ),
+                  ],
                 ),
         ),
 
-        // Layer 4: controls at the bottom
+        // Layer 5: "gravado" success banner above controls
+        if (_justRecorded)
+          Positioned(
+            bottom: 130,
+            left: 0,
+            right: 0,
+            child: Center(
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                decoration: BoxDecoration(
+                  color: Colors.green.withValues(alpha: 0.85),
+                  borderRadius: BorderRadius.circular(20),
+                ),
+                child: const Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(Icons.check_circle, color: Colors.white, size: 18),
+                    SizedBox(width: 8),
+                    Text(
+                      'Pedaço gravado!',
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+
+        // Layer 6: controls at the bottom
         Positioned(
           bottom: 40,
           left: 0,
@@ -290,13 +403,15 @@ class _RecorderScreenState extends State<RecorderScreen> {
   }
 
   Widget _buildControls() {
+    if (_justRecorded) return _buildPostRecordingControls();
+
     return Row(
       mainAxisAlignment: MainAxisAlignment.center,
       children: [
         if (!_isRecording) ...[
           TextButton(
             onPressed: _cancel,
-            child: const Text('Cancel', style: TextStyle(color: Colors.white70)),
+            child: const Text('Cancelar', style: TextStyle(color: Colors.white70)),
           ),
           const SizedBox(width: 24),
           GestureDetector(
@@ -327,6 +442,34 @@ class _RecorderScreenState extends State<RecorderScreen> {
             ),
           ),
         ],
+      ],
+    );
+  }
+
+  Widget _buildPostRecordingControls() {
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+      children: [
+        TextButton.icon(
+          onPressed: _recordAgain,
+          icon: const Icon(Icons.replay, color: Colors.white70),
+          label: const Text('De novo', style: TextStyle(color: Colors.white70)),
+        ),
+        if (_hasNext)
+          ElevatedButton.icon(
+            onPressed: _goToNext,
+            icon: const Icon(Icons.skip_next),
+            label: const Text('Próximo'),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.blue,
+              foregroundColor: Colors.white,
+            ),
+          ),
+        TextButton.icon(
+          onPressed: _finish,
+          icon: const Icon(Icons.check_circle, color: Colors.green),
+          label: const Text('Encerrar', style: TextStyle(color: Colors.green)),
+        ),
       ],
     );
   }

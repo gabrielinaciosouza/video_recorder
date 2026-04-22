@@ -70,17 +70,26 @@ class _ProjectScreenState extends State<ProjectScreen> {
   // ── Navigation ────────────────────────────────────────────────────────────
 
   Future<void> _navigateToRecord(int index) async {
-    final chunk = _script.chunks[index];
-    final videoPath = await Navigator.push<String?>(
+    final result = await Navigator.push<Map<String, String>?>(
       context,
-      MaterialPageRoute(builder: (_) => RecorderScreen(chunk: chunk)),
+      MaterialPageRoute(
+        builder: (_) => RecorderScreen(
+          chunks: _script.chunks,
+          startIndex: index,
+        ),
+      ),
     );
-    if (!mounted || videoPath == null) return;
+    if (!mounted || result == null || result.isEmpty) return;
     final newChunks = List<ScriptChunk>.from(_script.chunks);
-    newChunks[index] = newChunks[index].copyWith(
-      videoPath: videoPath,
-      status: ChunkStatus.recorded,
-    );
+    for (int i = 0; i < newChunks.length; i++) {
+      final path = result[newChunks[i].id];
+      if (path != null) {
+        newChunks[i] = newChunks[i].copyWith(
+          videoPath: path,
+          status: ChunkStatus.recorded,
+        );
+      }
+    }
     _mutate(_script.copyWith(chunks: newChunks));
   }
 
